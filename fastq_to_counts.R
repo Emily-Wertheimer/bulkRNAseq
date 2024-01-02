@@ -1,38 +1,45 @@
 ## How to get from FastQ files to Counts using Rsubread
 
+######################### load R using bash ################
+module spider R
+module load R/4.3.0-foss-2020b
+R
 
-# load required libraries in R 
+####################### load required libraries in R #############
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+    BiocManager::install("Rsubread")
 library(Rsubread)
+
+if (!require("dplyr", quietly = TRUE))
+    install.packages("dplyr")
+    BiocManager::install("dplyr")
 library(dplyr)
 
 
-# 1. build index
+##################### 1. build index ####################
 # here, you need a .fa file that is your index/reference file for alignment. This can be downloaded from UCSC Genome website 
 # "basename" is just what you want to call the output file of your index.
-buildindex(basename="hg38_index",reference="/sc/arion/projects/psychgen/HUCKINS_LAB_DONT_DELETE/resources/bulkRNA_alignment/hg38.fa.gz")
+buildindex(basename="hg38_index",reference="/gpfs/gibbs/pi/huckins/ekw28/hg38.fa.gz")
 
-# 2. align
+##################### 2. align.R  ####################
 # to run this as a job, save the code as a file (ie: align.R) then use the code at the bottom to submit it as a job. 
 # note that the beginning process before the if/else here is subject on the structure of your directories. You may have to change it depending on how your files are laid out
 
-# align.R ======================
-
-# load required libraries in R
-library(Rsubread)
-library(dplyr)
-
 # set the R script to take arguments from the command line
 args <- commandArgs(trailingOnly=TRUE) 
-i <- as.numeric(as.character(args[1]))  # i is going to be the number of the file in your directory (ie: first file in directory i=1)
+#i <- as.numeric(as.character(args[1]))  # i is going to be the number of the file in your directory (ie: first file in directory i=1)
 
-
-index_dir <- "/sc/arion/projects/psychgen/collab/hiPSC_SCZ_PRS_RNAseq/FURIN_edited_RNAseq/"  # this is the path where your index file is
-project_dir <- "/sc/arion/projects/psychgen/collab/hiPSC_SCZ_PRS_RNAseq/FURIN_edited_RNAseq/full_cohort/Project_Kd679/" # this is the path where your input files lie
-output_dir <- "/sc/arion/projects/psychgen/collab/hiPSC_SCZ_PRS_RNAseq/FURIN_edited_RNAseq/full_cohort/bam_files/" # this is where you want your aligned files to go
+index_dir <- "/gpfs/gibbs/pi/huckins/ekw28/hg38_index_files/"  # index file path
+project_dir <- "/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/sample_dir/" # input files path
+output_dir <- "/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/bam_aligned_files/" # aligned files path
 
 samples <- list.files(project_dir)  # loads all of the names of the input files
 
-input <- list.files(paste0(project_dir,samples[i]))  # loads the name of only the sample you're running here 
+#input <- list.files(paste0(project_dir,samples[i]))  # loads the name of only the sample you're running here
+input <- paste0(project_dir,samples[i])  # loads the name of only the sample you're running here 
+
 
 # get samples that have been completed
 done_samples <- list.files(output_dir) 
