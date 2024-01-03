@@ -1,6 +1,7 @@
 ## How to get from FastQ files to Counts using Rsubread
 
 ######################### load R using bash ################
+salloc --mem=32G -t 6:00:00 
 module spider R
 module load R/4.3.0-foss-2020b
 R
@@ -24,11 +25,11 @@ library(dplyr)
 buildindex(basename="hg38_index",reference="/gpfs/gibbs/pi/huckins/ekw28/hg38.fa.gz")
 
 ##################### 2. align.R  ####################
-# to run this as a job, save the code as a file (ie: align.R) then use the code at the bottom to submit it as a job. 
-# note that the beginning process before the if/else here is subject on the structure of your directories. You may have to change it depending on how your files are laid out
+## to run this as a job, save the code as a file (ie: align.R) then use the code at the bottom to submit it as a job. 
+## note that the beginning process before the if/else here is subject on the structure of your directories. You may have to change it depending on how your files are laid out
 
-# set the R script to take arguments from the command line
-args <- commandArgs(trailingOnly=TRUE) 
+## set the R script to take arguments from the command line
+#args <- commandArgs(trailingOnly=TRUE) 
 #i <- as.numeric(as.character(args[1]))  # i is going to be the number of the file in your directory (ie: first file in directory i=1)
 
 index_dir <- "/gpfs/gibbs/pi/huckins/ekw28/hg38_index_files/"  # index file path
