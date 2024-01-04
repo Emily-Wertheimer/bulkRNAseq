@@ -3,7 +3,8 @@
 ######################### load R using bash ################
 salloc --mem=32G -t 6:00:00 
 module spider R
-module load R/4.3.0-foss-2020b
+#module load R/4.3.0-foss-2020b
+ml R/4.3.0-foss-2020b
 R
 
 ####################### load required libraries in R #############
@@ -22,7 +23,7 @@ library(dplyr)
 ##################### 1. build index ####################
 # here, you need a .fa file that is your index/reference file for alignment. This can be downloaded from UCSC Genome website 
 # "basename" is just what you want to call the output file of your index.
-buildindex(basename="hg38_index",reference="/gpfs/gibbs/pi/huckins/ekw28/hg38.fa.gz")
+buildindex(basename="hg38_index2",reference="/gpfs/gibbs/pi/huckins/ekw28/hg38.fa.gz")
 
 ##################### 2. align.R  ####################
 ## to run this as a job, save the code as a file (ie: align.R) then use the code at the bottom to submit it as a job. 
@@ -32,13 +33,14 @@ buildindex(basename="hg38_index",reference="/gpfs/gibbs/pi/huckins/ekw28/hg38.fa
 #args <- commandArgs(trailingOnly=TRUE) 
 #i <- as.numeric(as.character(args[1]))  # i is going to be the number of the file in your directory (ie: first file in directory i=1)
 
-index_dir <- "/gpfs/gibbs/pi/huckins/ekw28/hg38_index_files/"  # index file path
+index_dir <- "/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/hg38_index_2"  # index file path
 project_dir <- "/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/sample_dir/" # input files path
 output_dir <- "/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/bam_aligned_files/" # aligned files path
 
 samples <- list.files(project_dir)  # loads all of the names of the input files
 
 #input <- list.files(paste0(project_dir,samples[i]))  # loads the name of only the sample you're running here
+i=1
 input <- paste0(project_dir,samples[i])  # loads the name of only the sample you're running here 
 
 
@@ -47,23 +49,31 @@ done_samples <- list.files(output_dir)
 done_samples <- done_samples[grepl(".summary", done_samples)] 
 done_samples <- gsub(".bam.summary", "", done_samples)
 
-# check if sample to run has already been completed. If it has, don't run alignment again.
-if (samples[i] %in% done_samples) {
-	print("Sample already completed")
 
-} else {  # align samples that have not been completed
-	align(index=paste0(index_dir, "hg38_index"),
-	readfile1=paste0(project_dir,samples[i],"/",input[1]),  # 2 readfiles due to paired-end sequencing. Here, the two inputs are in the same directory, named for the sample name
-	readfile2=paste0(project_dir,samples[i],"/",input[2]),
-	type="dna", 
-	output_file=paste0(output_dir, samples[i], ".bam"),
-	minFragLength=50,
-	maxFragLength=600)
-}
+## check if sample to run has already been completed. If it has, don't run alignment again.
+#if (samples[i] %in% done_samples) {
+#	print("Sample already completed")
+#
+#} else {  # align samples that have not been completed
+#	align(index=paste0(index_dir, "hg38_index"),
+#	readfile1=paste0(project_dir,samples[i],"/",input[1]),  # 2 readfiles due to paired-end sequencing. Here, the two inputs are in the same directory, named for the sample name
+#	readfile2=paste0(project_dir,samples[i],"/",input[2]),
+#	type="dna", 
+#	output_file=paste0(output_dir, samples[i], ".bam"),
+#	minFragLength=50,
+#	maxFragLength=600)
+#}
 
+### align w/o loops + hardcoad
+align(index="/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/hg38_index_files/hg38_index",
+      readfile1="/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/sample_dir/31821C1_130_063_S22_L001_R1_001.fastq.gz",
+      readfile2="/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/sample_dir/31821C1_130_063_S22_L001_R2_001.fastq.gz",
+      type='dna',
+      output_file=paste0(output_dir, samples[i], ".bam"),
+      minFragLength=50,
+      maxFragLength=600)
 
-
-# to run the above code on the command line as a job
+############# to run the above code on the command line as a job ##########
 ml R
 
 for i in {1..121}
