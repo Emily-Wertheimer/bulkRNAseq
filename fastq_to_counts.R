@@ -33,8 +33,8 @@ buildindex(basename="hg38_index2",reference="/gpfs/gibbs/pi/huckins/ekw28/hg38.f
 #args <- commandArgs(trailingOnly=TRUE) 
 #i <- as.numeric(as.character(args[1]))  # i is going to be the number of the file in your directory (ie: first file in directory i=1)
 
-index_dir <- "/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/hg38_index_2"  # index file path
-project_dir <- "/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/sample_dir/" # input files path
+index_dir <- "/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/hg38_index_files/hg38_index"  # index file path
+project_dir <- "/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/sample_dir/merged_all_lanes" # input files path
 output_dir <- "/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/bam_aligned_files/" # aligned files path
 
 samples <- list.files(project_dir)  # loads all of the names of the input files
