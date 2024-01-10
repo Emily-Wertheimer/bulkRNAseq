@@ -2,17 +2,18 @@
 git clone https://github.com/lh3/seqtk.git;
 cd seqtk; make
 
-# shell script
+####### shell script #########
 #!/bin/bash
+module load seqtk
 
 # Directory containing FASTQ files
-FASTQ_DIR="/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/sample_dir/merged_all_lanes"
+FASTQ_DIR="/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/seqtk/sample_dir/merged_all_lanes"
 
 # Directory to output paired reads
-PAIRED_DIR="/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/sample_dir/merged_all_lanes_paired"
+PAIRED_DIR="/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/seqtk/sample_dir/merged_all_lanes_paired"
 
 # Directory to output unpaired reads
-SINGLE_DIR="/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/sample_dir/merged_all_lanes_UNpaired"
+SINGLE_DIR="/gpfs/gibbs/pi/huckins/ekw28/ghre_lep_sema_RNAseq/seqtk/sample_dir/merged_all_lanes_UNpaired"
 
 # Loop through R1 files
 for r1_file in $FASTQ_DIR/*_R1_*.fastq.gz; do
@@ -27,3 +28,8 @@ for r1_file in $FASTQ_DIR/*_R1_*.fastq.gz; do
     # Run seqtk
     seqtk pairfq -t m1 -f $r1_file -r $r2_file -1 $r1_paired -2 $r2_paired -s $singles
 done
+#############
+
+## make executable
+
+
