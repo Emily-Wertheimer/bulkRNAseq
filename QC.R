@@ -145,4 +145,26 @@ metadata.df$Plate[substr(metadata.df$sampleName, nchar(metadata.df$sampleName), 
 metadata.df$Sex[metadata.df$Donor == '2607'| metadata.df$Donor == '553'] <- "XY"
 metadata.df$Sex[metadata.df$Donor == '3182'] <- "XX"
 
+## RIN
+# get RIN from YGCA
+library(readxl)
+glut_gaba.ygca.qc <- read_excel("/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/0_YGCA_QC/RQ21708_Wertheimer_samples 1-59_07262023.xlsx")
+astro.ygca.qc <- read_excel("/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/0_YGCA_QC/RQ22282_ekw28_1-18_09182023.xlsx")
 
+# drop leading "_" in sample ID
+glut_gaba.ygca.qc$`Sample ID` <- sub(".*?_", "", glut_gaba.ygca.qc$`Sample ID`)
+astro.ygca.qc$`Sample Name` <- sub(".*?_", "", astro.ygca.qc$`Sample Name`)
+
+# make big table with RIN and sample ID 
+comb.rin.sampID <- data.frame(sampleName = rep(NA_character_, nSamples), RIN = rep(NA_complex_),
+                              stringsAsFactors = FALSE)  # Ensure that character data does not get converted to factors
+
+# extract RIN 
+new.vec.ID <- c(glut_gaba.ygca.qc$`Sample ID`, astro.ygca.qc$`Sample Name`)
+new.vec.RIN <- c(glut_gaba.ygca.qc$RQN, astro.ygca.qc$RIN)
+
+comb.rin.sampID$sampleName <- new.vec.ID 
+comb.rin.sampID$RIN <- new.vec.RIN
+
+metadata.df <- merge(metadata.df, comb.rin.sampID, by='sampleName')
+metadata.df <- subset(metadata.df, select = -RIN.x)
