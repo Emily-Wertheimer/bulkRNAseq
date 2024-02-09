@@ -19,7 +19,7 @@ gene_counts.df <- fread("/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_R
 gene_counts.df <- as.data.frame(gene_counts.df)
 
 # Set the first column as row names correctly
-rownames(gene_counts.df) <- gene_counts.df[[1]]
+#rownames(gene_counts.df) <- gene_counts.df[,1]
 
 # Remove the first column properly
 gene_counts.df <- gene_counts.df[ , -1, drop = FALSE]
@@ -205,6 +205,6 @@ rownames(annotations.df) <- annotations.df[,1]
 library(edgeR)
 # Assuming gene_counts.df has gene names as row names and the rest of the data is numeric
 gene_counts_matrix <- as.matrix(gene_counts.df)
+gene_counts_matrix <- as.numeric(gene_counts_matrix)
 gene_cpm.mtx <- cpm(gene_counts_matrix)  # using edgeR function
-genes_over_cpm_threshold.mtx <- gene_cpm.mtx > 0.5  # 0.5 is our threshold
-# this returns a matrix of booleans 
+   #### error in cpm.default(gene_counts)matrix: library sizes should be finite and non-negativeß
