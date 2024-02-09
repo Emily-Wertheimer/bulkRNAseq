@@ -10,8 +10,27 @@ library(readr)
 setwd('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq')
 
 # import data - opens csv and formats so that ensmbl ID is row names
-gene_counts.df <- read_csv("/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/2_counts/count_matrices/merged/Count_Matrix_Annotated_FINAL.txt")
+library(data.table)
+gene_counts.df <- fread("/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/2_counts/count_matrices/merged/Count_Matrix_Annotated_FINAL.txt")
 #rownames(gene_counts.df) <- gene_counts.df[,1]
+
+# Assuming the first column of gene_counts.df contains the identifiers you want as row names
+# and ensuring it's converted from a tibble to a dataframe
+gene_counts.df <- as.data.frame(gene_counts.df)
+
+# Set the first column as row names correctly
+rownames(gene_counts.df) <- gene_counts.df[[1]]
+
+# Remove the first column properly
+gene_counts.df <- gene_counts.df[ , -1, drop = FALSE]
+
+# Ensure row names are unique if necessary
+rownames(gene_counts.df) <- make.unique(rownames(gene_counts.df))
+
+# Check the first few rows to verify the structure
+head(gene_counts.df)
+
+
 
 ################ create csv for metadata #################
 
@@ -30,7 +49,7 @@ metadata.df <- data.frame(
   Treatment = rep(NA_character_, nSamples),
   Well = rep(NA_character_, nSamples),
   Plate = rep(NA_character_, nSamples),
-  Sex = rep(NA_character_, nSamples),
+  Sex = rep(NA_character_, nSamples), RIN = rep(NA_complex_),
   stringsAsFactors = FALSE)  # Ensure that character data does not get converted to factors
 
 
@@ -168,3 +187,24 @@ comb.rin.sampID$RIN <- new.vec.RIN
 
 metadata.df <- merge(metadata.df, comb.rin.sampID, by='sampleName')
 metadata.df <- subset(metadata.df, select = -RIN.x)
+
+############# annotations ##############
+annotations.df <- read.csv("/gpfs/gibbs/pi/huckins/ekw28/resources/gene_annotations.csv")
+# pick subset of annotation data that we want
+annotations.df <- subset(annotations.df, select=c(ensembl, Chromosome, 
+                                                  Gene_name, description))
+# make the ensmbl ID into the row name
+rownames(annotations.df) <- annotations.df[,1]
+
+############## remove low cpm genes ##############
+# remove low counts per million (cpm) genes - this takes away bias
+#  if a gene is expressed in 1 transcript but doubles, it's not important but
+#  the analysis will think it is. So we should remove it.
+# THIS ANALYSIS: we want genes with at least 20 counts in at least 2 of our conditions
+
+library(edgeR)
+# Assuming gene_counts.df has gene names as row names and the rest of the data is numeric
+gene_counts_matrix <- as.matrix(gene_counts.df)
+gene_cpm.mtx <- cpm(gene_counts_matrix)  # using edgeR function
+genes_over_cpm_threshold.mtx <- gene_cpm.mtx > 0.5  # 0.5 is our threshold
+# this returns a matrix of booleans 
