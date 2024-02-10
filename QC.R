@@ -6,31 +6,29 @@ BiocManager::install("limma")
 BiocManager::install("edgeR")
 library(limma)
 library(readr)
+library(dplyr)
+install.packages("tibble")
+library(tibble)
+library(edgeR)
 
 setwd('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq')
 
 # import data - opens csv and formats so that ensmbl ID is row names
 library(data.table)
-gene_counts.df <- fread("/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/2_counts/count_matrices/merged/Count_Matrix_Annotated_FINAL.txt")
-#rownames(gene_counts.df) <- gene_counts.df[,1]
+gene_counts.dt <- fread("/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/2_counts/count_matrices/merged/Count_Matrix_Annotated_FINAL.txt")
+gene_counts.df <- as.data.frame(gene_counts.dt)
 
-# Assuming the first column of gene_counts.df contains the identifiers you want as row names
-# and ensuring it's converted from a tibble to a dataframe
-gene_counts.df <- as.data.frame(gene_counts.df)
+annotations.df <- read.csv("/gpfs/gibbs/pi/huckins/ekw28/resources/gene_annotations.csv")
+# pick subset of annotation data that we want
+annotations.df <- subset(annotations.df, select=c(ensembl, Chromosome, 
+                                                  Gene_name, description))
 
-# Set the first column as row names correctly
-#rownames(gene_counts.df) <- gene_counts.df[,1]
+gene_counts.df <- merge(gene_counts.df, annotations.df, by.x='Gene_name', by.y='Gene_name', all.x = TRUE)
 
-# Remove the first column properly
-gene_counts.df <- gene_counts.df[ , -1, drop = FALSE]
-
-# Ensure row names are unique if necessary
-rownames(gene_counts.df) <- make.unique(rownames(gene_counts.df))
-
-# Check the first few rows to verify the structure
-head(gene_counts.df)
-
-
+# This adds a suffix to make row names unique
+gene_counts.df$ensembl <- make.unique(gene_counts.df$ensembl)
+# make the ensmbl ID into the row name
+gene_counts.df <- gene_counts.df %>% remove_rownames() %>% column_to_rownames(var="ensembl")
 
 ################ create csv for metadata #################
 
@@ -188,23 +186,35 @@ comb.rin.sampID$RIN <- new.vec.RIN
 metadata.df <- merge(metadata.df, comb.rin.sampID, by='sampleName')
 metadata.df <- subset(metadata.df, select = -RIN.x)
 
-############# annotations ##############
-annotations.df <- read.csv("/gpfs/gibbs/pi/huckins/ekw28/resources/gene_annotations.csv")
-# pick subset of annotation data that we want
-annotations.df <- subset(annotations.df, select=c(ensembl, Chromosome, 
-                                                  Gene_name, description))
-# make the ensmbl ID into the row name
-rownames(annotations.df) <- annotations.df[,1]
-
 ############## remove low cpm genes ##############
 # remove low counts per million (cpm) genes - this takes away bias
 #  if a gene is expressed in 1 transcript but doubles, it's not important but
 #  the analysis will think it is. So we should remove it.
 # THIS ANALYSIS: we want genes with at least 20 counts in at least 2 of our conditions
 
-library(edgeR)
-# Assuming gene_counts.df has gene names as row names and the rest of the data is numeric
+# make sure all data in gene_counts.df is numeric (ie no gene names!)
+gene_counts.df <- gene_counts.df %>% select(-Gene_name) 
+gene_counts.df <- gene_counts.df %>% select(-description) 
+gene_counts.df <- gene_counts.df %>% select(-Chromosome) # remove gene_name col
+
+# convert to matrix
 gene_counts_matrix <- as.matrix(gene_counts.df)
-gene_counts_matrix <- as.numeric(gene_counts_matrix)
-gene_cpm.mtx <- cpm(gene_counts_matrix)  # using edgeR function
-   #### error in cpm.default(gene_counts)matrix: library sizes should be finite and non-negativeß
+
+# run cpm 
+gene_cpm.mtx <- cpm(gene_counts_matrix)
+
+# high pass filter
+genes_over_cpm_threshold.mtx <- gene_cpm.mtx > 0.5  # 0.5 is our threshold; this returns a matrix of booleans 
+
+# how many of the samples have cpm >0.5 for each gene?
+samples_over_thresh.int <- rowSums(genes_over_cpm_threshold.mtx)
+
+# subset the matrix only for the genes that are >0.5 cpm in more than 2 samples
+keep <- samples_over_thresh.int > 2
+gene_counts_aftercpm.df <- gene_counts.df[keep,]
+
+# check for validation that the 0.5 cpm corresponds to 20 counts
+plot(gene_cpm.mtx[,1], gene_counts.df[,1], ylim=c(0,50), xlim=c(0,3))
+abline(v=0.5, h=20)
+
+
