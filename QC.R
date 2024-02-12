@@ -1,4 +1,5 @@
-################ install packages, set dir, import data #################
+# --------------------------------------------------------------------------- IMPORT LIBRARIES
+
 # install packages & dependencies
 if (!require("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
@@ -11,6 +12,7 @@ install.packages("tibble")
 library(tibble)
 library(edgeR)
 
+# --------------------------------------------------------------------------- IMPORT RAW COUTNS DATA
 setwd('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq')
 
 # import data - opens csv and formats so that ensmbl ID is row names
@@ -30,7 +32,7 @@ gene_counts.df$ensembl <- make.unique(gene_counts.df$ensembl)
 # make the ensmbl ID into the row name
 gene_counts.df <- gene_counts.df %>% remove_rownames() %>% column_to_rownames(var="ensembl")
 
-################ create csv for metadata #################
+# --------------------------------------------------------------------------- CREATE METADATA CSV
 
 # get sample names file
 setwd('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/sample_dir/')
@@ -77,36 +79,36 @@ metadata.df$Treatment[substr(metadata.df$sampleName, 1, 5) == "31821"] <- 'veh'
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 5) == "31822"] <- 'ghre'
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 5) == "31823"] <- 'lep'
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 5) == "31824"] <- 'sema'
-metadata.df$Treatment[substr(metadata.df$sampleName, 1, 5) == "31825"] <- 'ghre + sema'
-metadata.df$Treatment[substr(metadata.df$sampleName, 1, 5) == "31826"] <- 'lep + sema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 5) == "31825"] <- 'ghreSema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 5) == "31826"] <- 'lepSema'
 
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == 'NGN2A1'] <- 'veh'
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2A2"] <- 'ghre'
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2A3"] <- 'lep'
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2A4"] <- 'sema'
-metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2A5"] <- 'ghre + sema'
-metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2A6"] <- 'lep + sema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2A5"] <- 'ghreSema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2A6"] <- 'lepSema'
 
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2B1"] <- 'veh'
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2B2"] <- 'ghre'
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2B3"] <- 'lep'
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2B4"] <- 'sema'
-metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2B5"] <- 'ghre + sema'
-metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2B6"] <- 'lep + sema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2B5"] <- 'ghreSema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2B6"] <- 'lepSema'
 
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5531"] <- 'veh'
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5532"] <- 'ghre'
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5533"] <- 'lep'
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5534"] <- 'sema'
-metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5535"] <- 'ghre + sema'
-metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5536"] <- 'lep + sema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5535"] <- 'ghreSema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5536"] <- 'lepSema'
 
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5As1"] <- 'veh'
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5As2"] <- 'ghre'
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5As3"] <- 'lep'
 metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5As4"] <- 'sema'
-metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5As5"] <- 'ghre + sema'
-metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5As6"] <- 'lep + sema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5As5"] <- 'ghreSema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5As6"] <- 'lepSema'
 
 # well 
 metadata.df$Well[substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)) == "A1"] <- "A1"
@@ -184,18 +186,17 @@ comb.rin.sampID$sampleName <- new.vec.ID
 comb.rin.sampID$RIN <- new.vec.RIN
 
 metadata.df <- merge(metadata.df, comb.rin.sampID, by='sampleName')
-metadata.df <- subset(metadata.df, select = -RIN.x)
+metadata.df <- subset(metadata.df, select = -RIN.y)
 
-############## remove low cpm genes ##############
-# remove low counts per million (cpm) genes - this takes away bias
+# --------------------------------------------------------------------------- REMOVE LOW CPM GENES
+
+# this takes away bias
 #  if a gene is expressed in 1 transcript but doubles, it's not important but
 #  the analysis will think it is. So we should remove it.
 # THIS ANALYSIS: we want genes with at least 20 counts in at least 2 of our conditions
 
-# make sure all data in gene_counts.df is numeric (ie no gene names!)
-gene_counts.df <- gene_counts.df %>% select(-Gene_name) 
-gene_counts.df <- gene_counts.df %>% select(-description) 
-gene_counts.df <- gene_counts.df %>% select(-Chromosome) # remove gene_name col
+# make sure all data in gene_counts.df is numeric (ie no gene name, description, or chromosome cols); also remove GeneID
+gene_counts.df <- subset(gene_counts.df, select = c(-Chromosome, -Gene_name, -description, -GeneID))
 
 # convert to matrix
 gene_counts_matrix <- as.matrix(gene_counts.df)
@@ -214,7 +215,68 @@ keep <- samples_over_thresh.int > 2
 gene_counts_aftercpm.df <- gene_counts.df[keep,]
 
 # check for validation that the 0.5 cpm corresponds to 20 counts
-plot(gene_cpm.mtx[,1], gene_counts.df[,1], ylim=c(0,50), xlim=c(0,3))
-abline(v=0.5, h=20)
+plot1 <- plot(gene_cpm.mtx[,8], gene_counts.df[,8], ylim=c(0,50), xlim=c(0,3))
+plot1<-abline(v=0.5, h=20)
+# --------------------------------------------------------------------------- DGE OBJECT CREATION
+
+# The DGElist holds all of the data you want to analyze including:
+#    counts, library size to normalize to, normalization factors, experimental
+#    conditions, gene annotations
+
+data.dge <-  DGEList(gene_counts_aftercpm.df) 
+
+# add experimental condition metadata to the object
+#data.dge$samples$group <- meta_data.df$mod.gene
+metadata.df <- metadata.df %>% distinct()
+data.dge$samples$group <- metadata.df$Treatment # is this my equivalent of "mod.gene"?
+
+# add annotation data to the object
+# first, match the annotations to the dge list object rownames
+annotations.df <- annotations.df[match(rownames(data.dge), rownames(annotations.df)),]
+data.dge$genes <- annotations.df
+
+# --------------------------------------------------------------------------- TMM NORMALIZATION
+  # TMM normalizes library sizes. If you do RNA seq on 2 samples and happen to get
+  # better reads on one, it will have a bigger library size.
+  # TMM accounts for this by defining the right library size, and then normalizing
+  # all other library sizes to that one. So it may multiply libraries that are
+  # too small by, say, 1.3, and those that are too large by, say, 0.8
+
+data.dge <- calcNormFactors(data.dge) 
+
+# shows how each library size was normalized
+data.dge$samples$norm.factors 
+
+# --------------------------------------------------------------------------- DESIGN MATRIX
+# define what to regress out for
+design_matrix <- model.matrix(~ 0 + cellType + Donor + Treatment + Well, data = metadata.df) # did not include sex (complete colinearity with line) or RIN (missing data)
+
+# --------------------------------------------------------------------------- VOOM TRANSFORM
+# voom is a limma function that transforms the data into log2cpm which is what
+# the limma package uses for RNA seq analysis. This allows your data to be
+# in the right format for limma's math. 
+
+data.voom <- voom(counts=data.dge, design=design_matrix, plot=TRUE) # limma package function
+
+
+# --------------------------------------------------------------------------- LM FIT
+# We have a general model that explains RNA expression and we want to fit our
+# data to that model. This allows us to use limma to make contrasts
+
+data.fit <- lmFit(object=data.voom, design=design_matrix) # limma package function
+
+# --------------------------------------------------------------------------- CONTRAST MATRIX
+# make contrast to assess effects of different treatments (just start w/ lep, ghre, sema each v. veh)
+cm <-makeContrasts( 
+  lep_v_veh = (lep - veh),
+  ghre_v_veh = (ghre - veh),
+  sema_v_veh = (sema - veh),
+  levels=design_matrix)
+
+# add contrasts to the Lmfit object. 
+fit <- contrasts.fit(fit=data.fit, contrasts=cm)
+
+# perform bayes shrinkage to the analysis and estimate modified t and p values
+fitDupCor <- eBayes(fit)
 
 
