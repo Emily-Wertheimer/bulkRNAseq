@@ -1,0 +1,963 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+# --------------------------------------------------------------------------- IMPORT LIBRARIES
+
+# install packages & dependencies
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install("limma")
+BiocManager::install("edgeR")
+BiocManager::install("variancePartition")
+BiocManager::install("RUVSeq")
+BiocManager::install("sva")
+library(variancePartition)
+library(limma)
+library(readr)
+library(edgeR)
+library(sva)
+library(RUVSeq)
+library(EnhancedVolcano)
+
+
+
+library(dplyr)
+library(tibble)
+library(data.table)
+install.packages("tibble")
+library(tidyverse)
+install.packages('ggfortify')
+library(ggfortify) # PCA
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+
+```
+
+```{r}
+# --------------------------------------------------------------------------- IMPORT RAW COUNTS DATA
+setwd('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq')
+
+# import data - opens csv and formats so that ensmbl ID is row names
+gene_counts.dt <- fread("/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/2_counts/count_matrices/merged/Count_Matrix_Annotated_FINAL.txt")
+gene_counts.df <- as.data.frame(gene_counts.dt)
+
+annotations.df <- read.csv("/gpfs/gibbs/pi/huckins/ekw28/resources/gene_annotations.csv")
+# pick subset of annotation data that we want
+annotations.df <- subset(annotations.df, select=c(ensembl, Chromosome, Gene_name, description))
+
+gene_counts.df <- merge(gene_counts.df, annotations.df, by.x='Gene_name', by.y='Gene_name', all.x = TRUE)
+
+# This adds a suffix to make row names unique
+gene_counts.df$ensembl <- make.unique(gene_counts.df$ensembl)
+# make the ensmbl ID into the row name
+rownames(gene_counts.df) <- gene_counts.df$ensembl
+
+```
+
+```{r}
+# --------------------------------------------------------------------------- CREATE METADATA CSV
+
+# get sample names file
+setwd('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/sample_dir/')
+sampleNames_txt <- read_csv(file="/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/sample_dir/unique_filenames.csv", col_names=FALSE)
+sampleNames_vec <- as.character(sampleNames_txt$X1)
+
+nSamples <- length(sampleNames_vec)
+
+# Create a metadata data frame with columns initialized to NA of appropriate types
+metadata.df <- data.frame(
+  sampleName = rep(NA_character_, nSamples),  # Use NA_character_ for character columns
+  cellType = rep(NA_character_, nSamples),
+  Donor = rep(NA_character_, nSamples),
+  Treatment = rep(NA_character_, nSamples),
+  Well = rep(NA_character_, nSamples),
+  Plate = rep(NA_character_, nSamples),
+  Sex = rep(NA_character_, nSamples), RIN = rep(NA_complex_),
+  stringsAsFactors = FALSE)  # Ensure that character data does not get converted to factors
+
+
+# fill first col w/ sample ids
+metadata.df$sampleName <- sampleNames_vec
+
+# drop dumb appendages
+metadata.df$sampleName <- sub("_.*$", "", metadata.df$sampleName)
+
+
+## fill other cols using coded sampleName
+# cell type
+metadata.df$cellType[substr(metadata.df$sampleName, 1, 3) == "318"] <- 'iGABA'
+metadata.df$cellType[substr(metadata.df$sampleName, 1, 3) == "NGN"] <- 'iGlut'
+metadata.df$cellType[substr(metadata.df$sampleName, 1, 3) == "5As"] <- 'iAstro'
+metadata.df$cellType[substr(metadata.df$sampleName, 1, 3) == "553"] <- 'iGABA'
+
+# donor
+metadata.df$Donor[substr(metadata.df$sampleName, 1, 3) == "318"] <- '3182'
+metadata.df$Donor[substr(metadata.df$sampleName, 1, 5) == "NGN2A"] <- '2607'
+metadata.df$Donor[substr(metadata.df$sampleName, 1, 5) == "NGN2B"] <- '553'
+metadata.df$Donor[substr(metadata.df$sampleName, 1, 3) == "5As"] <- '553'
+metadata.df$Donor[substr(metadata.df$sampleName, 1, 3) == "553"] <- '553'
+
+# tx
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 5) == "31821"] <- 'veh'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 5) == "31822"] <- 'ghre'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 5) == "31823"] <- 'lep'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 5) == "31824"] <- 'sema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 5) == "31825"] <- 'ghreSema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 5) == "31826"] <- 'lepSema'
+
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == 'NGN2A1'] <- 'veh'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2A2"] <- 'ghre'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2A3"] <- 'lep'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2A4"] <- 'sema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2A5"] <- 'ghreSema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2A6"] <- 'lepSema'
+
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2B1"] <- 'veh'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2B2"] <- 'ghre'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2B3"] <- 'lep'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2B4"] <- 'sema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2B5"] <- 'ghreSema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 6) == "NGN2B6"] <- 'lepSema'
+
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5531"] <- 'veh'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5532"] <- 'ghre'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5533"] <- 'lep'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5534"] <- 'sema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5535"] <- 'ghreSema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5536"] <- 'lepSema'
+
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5As1"] <- 'veh'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5As2"] <- 'ghre'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5As3"] <- 'lep'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5As4"] <- 'sema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5As5"] <- 'ghreSema'
+metadata.df$Treatment[substr(metadata.df$sampleName, 1, 4) == "5As6"] <- 'lepSema'
+
+# well 
+metadata.df$Well[substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)) == "A1"] <- "A1"
+metadata.df$Well[substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)) == "A2"] <- "A2"
+metadata.df$Well[substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)) == "A3"] <- "A3"
+metadata.df$Well[substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)) == "A4"] <- "A4"
+
+metadata.df$Well[substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)) == "B1"] <- "B1"
+metadata.df$Well[substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)) == "B2"] <- "B2"
+metadata.df$Well[substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)) == "B3"] <- "B3"
+metadata.df$Well[substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)) == "B4"] <- "B4"
+
+metadata.df$Well[substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)) == "C1"] <- "C1"
+metadata.df$Well[substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)) == "C2"] <- "C2"
+metadata.df$Well[substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)) == "C3"] <- "C3"
+metadata.df$Well[substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)) == "C4"] <- "C4"
+
+metadata.df$Well[metadata.df$cellType == 'iAstro' & substr(metadata.df$sampleName, 5, 5) == "A" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "1"] <- "A1"
+metadata.df$Well[metadata.df$cellType == 'iAstro' & substr(metadata.df$sampleName, 5, 5) == "A" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "2"] <- "A2"
+metadata.df$Well[metadata.df$cellType == 'iAstro' & substr(metadata.df$sampleName, 5, 5) == "A" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "3"] <- "A3"
+metadata.df$Well[metadata.df$cellType == 'iAstro' & substr(metadata.df$sampleName, 5, 5) == "A" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "4"] <- "A4"
+
+metadata.df$Well[metadata.df$cellType == 'iAstro' & substr(metadata.df$sampleName, 5, 5) == "B" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "1"] <- "B1"
+metadata.df$Well[metadata.df$cellType == 'iAstro' & substr(metadata.df$sampleName, 5, 5) == "B" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "2"] <- "B2"
+metadata.df$Well[metadata.df$cellType == 'iAstro' & substr(metadata.df$sampleName, 5, 5) == "B" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "3"] <- "B3"
+metadata.df$Well[metadata.df$cellType == 'iAstro' & substr(metadata.df$sampleName, 5, 5) == "B" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "4"] <- "B4"
+
+metadata.df$Well[metadata.df$cellType == 'iAstro' & substr(metadata.df$sampleName, 5, 5) == "C" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "1"] <- "C1"
+metadata.df$Well[metadata.df$cellType == 'iAstro' & substr(metadata.df$sampleName, 5, 5) == "C" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "2"] <- "C2"
+metadata.df$Well[metadata.df$cellType == 'iAstro' & substr(metadata.df$sampleName, 5, 5) == "C" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "3"] <- "C3"
+metadata.df$Well[metadata.df$cellType == 'iAstro' & substr(metadata.df$sampleName, 5, 5) == "C" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "4"] <- "C4"
+
+metadata.df$Well[metadata.df$cellType == 'iGABA' & metadata.df$Donor == '553' & substr(metadata.df$sampleName, 5, 5) == "A" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "1"] <- "A1"
+metadata.df$Well[metadata.df$cellType == 'iGABA' & metadata.df$Donor == '553' & substr(metadata.df$sampleName, 5, 5) == "A" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "2"] <- "A2"
+metadata.df$Well[metadata.df$cellType == 'iGABA' & metadata.df$Donor == '553' & substr(metadata.df$sampleName, 5, 5) == "A" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "3"] <- "A3"
+metadata.df$Well[metadata.df$cellType == 'iGABA' & metadata.df$Donor == '553' & substr(metadata.df$sampleName, 5, 5) == "A" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "4"] <- "A4"
+
+metadata.df$Well[metadata.df$cellType == 'iGABA' & metadata.df$Donor == '553' & substr(metadata.df$sampleName, 5, 5) == "B" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "1"] <- "B1"
+metadata.df$Well[metadata.df$cellType == 'iGABA' & metadata.df$Donor == '553' & substr(metadata.df$sampleName, 5, 5) == "B" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "2"] <- "B2"
+metadata.df$Well[metadata.df$cellType == 'iGABA' & metadata.df$Donor == '553' & substr(metadata.df$sampleName, 5, 5) == "B" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "3"] <- "B3"
+metadata.df$Well[metadata.df$cellType == 'iGABA' & metadata.df$Donor == '553' & substr(metadata.df$sampleName, 5, 5) == "B" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "4"] <- "B4"
+
+metadata.df$Well[metadata.df$cellType == 'iGABA' & metadata.df$Donor == '553' & substr(metadata.df$sampleName, 5, 5) == "C" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "1"] <- "C1"
+metadata.df$Well[metadata.df$cellType == 'iGABA' & metadata.df$Donor == '553' & substr(metadata.df$sampleName, 5, 5) == "C" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "2"] <- "C2"
+metadata.df$Well[metadata.df$cellType == 'iGABA' & metadata.df$Donor == '553' & substr(metadata.df$sampleName, 5, 5) == "C" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "3"] <- "C3"
+metadata.df$Well[metadata.df$cellType == 'iGABA' & metadata.df$Donor == '553' & substr(metadata.df$sampleName, 5, 5) == "C" & substr(metadata.df$sampleName, nchar(metadata.df$sampleName)-1, nchar(metadata.df$sampleName)-1) == "4"] <- "C4"
+
+metadata.df$Plate[substr(metadata.df$sampleName, nchar(metadata.df$sampleName), nchar(metadata.df$sampleName)) == "A"] <- "A"
+metadata.df$Plate[substr(metadata.df$sampleName, nchar(metadata.df$sampleName), nchar(metadata.df$sampleName)) == "B"] <- "B"
+metadata.df$Plate[substr(metadata.df$sampleName, nchar(metadata.df$sampleName), nchar(metadata.df$sampleName)) == "C"] <- "C"
+
+# sex
+metadata.df$Sex[metadata.df$Donor == '2607'| metadata.df$Donor == '553'] <- "XY"
+metadata.df$Sex[metadata.df$Donor == '3182'] <- "XX"
+
+## RIN
+# get RIN from YGCA
+library(readxl)
+glut_gaba.ygca.qc <- read_excel("/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/0_YGCA_QC/RQ21708_Wertheimer_samples 1-59_07262023.xlsx")
+astro.ygca.qc <- read_excel("/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/0_YGCA_QC/RQ22282_ekw28_1-18_09182023.xlsx")
+
+# drop leading "_" in sample ID
+glut_gaba.ygca.qc$`Sample ID` <- sub(".*?_", "", glut_gaba.ygca.qc$`Sample ID`)
+astro.ygca.qc$`Sample Name` <- sub(".*?_", "", astro.ygca.qc$`Sample Name`)
+
+# make big table with RIN and sample ID 
+comb.rin.sampID <- data.frame(sampleName = rep(NA_character_, nSamples), RIN = rep(NA_complex_),
+                              stringsAsFactors = FALSE)  # Ensure that character data does not get converted to factors
+
+# extract RIN & combine w/ metadata.df
+new.vec.ID <- c(glut_gaba.ygca.qc$`Sample ID`, astro.ygca.qc$`Sample Name`)
+new.vec.RIN <- c(glut_gaba.ygca.qc$RQN, astro.ygca.qc$RIN)
+
+comb.rin.sampID$sampleName <- new.vec.ID 
+comb.rin.sampID$RIN <- new.vec.RIN
+
+metadata.df <- merge(metadata.df, comb.rin.sampID, by='sampleName')
+metadata.df <- subset(metadata.df, select = -RIN.y)
+```
+
+```{r}
+# --------------------------------------------------------------------------- SEPARATE BY CELL TYPE
+## gene counts
+# remove leading X if applicable 
+colnames(gene_counts.df) <- gsub("^X", "", sub("_.*", "", colnames(gene_counts.df)))
+
+# subset by sample name code 
+gene_counts.df.iGABA <- gene_counts.df[, substr(colnames(gene_counts.df), 1, 3) %in% c('318', '553')]
+gene_counts.df.iGlut <- gene_counts.df[, substr(colnames(gene_counts.df), 1, 3) == 'NGN']
+gene_counts.df.iAstro <- gene_counts.df[, substr(colnames(gene_counts.df), 1, 3) == '5As']
+
+metadata.df.iGABA <- metadata.df[metadata.df$cellType == 'iGABA',]
+metadata.df.iGlut <- metadata.df[metadata.df$cellType == 'iGlut',]
+metadata.df.iAstro <- metadata.df[metadata.df$cellType == 'iAstro',]
+
+# write metas
+setwd('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/data') 
+write_csv(metadata.df.iGABA, '/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/iGABA_meta_for_SVA.csv')
+write_csv(metadata.df.iGlut, '/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/iGlut_meta_for_SVA.csv')
+write_csv(metadata.df.iAstro, '/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/iAstro_meta_for_SVA.csv')
+
+```
+
+```{r}
+# --------------------------------------------------------------------------- REMOVE LOW CPM GENES
+
+# this takes away bias
+#  if a gene is expressed in 1 transcript but doubles, it's not important but
+#  the analysis will think it is. So we should remove it.
+# THIS ANALYSIS: we want genes with at least 20 counts in at least 2 of our conditions
+
+# make sure all data in gene_counts.df is numeric (ie no gene name, description, or chromosome cols); also remove GeneID
+#gene_counts.df.iGABA.numeric <- subset(gene_counts.df.iGABA, select = c(-Gene, -GeneID, -description, -Chromosome, -ensembl)) #-Gene_name,
+#gene_counts.df.iGlut.numeric <- subset(gene_counts.df.iGlut, select = c(-Gene, -GeneID, -description, -Chromosome, -ensembl)) # -Gene_name,
+#gene_counts.df.iAstro.numeric <- subset(gene_counts.df.iAstro, select = c(-Gene, -GeneID, -description, -Chromosome, -ensembl)) #-Gene_name,
+
+# convert to matrix
+gene_counts_matrix_iGABA <- as.matrix(gene_counts.df.iGABA)
+gene_counts_matrix_iGlut <- as.matrix(gene_counts.df.iGlut)
+gene_counts_matrix_iAstro <- as.matrix(gene_counts.df.iAstro)
+
+# run cpm 
+gene_cpm.mtx.iGABA <- cpm(gene_counts_matrix_iGABA)
+gene_cpm.mtx.iGlut <- cpm(gene_counts_matrix_iGlut)
+gene_cpm.mtx.iAstro <- cpm(gene_counts_matrix_iAstro)
+
+# high pass filter
+genes_over_cpm_threshold.iGABA.mtx <- gene_cpm.mtx.iGABA > 0.5  # 0.5 is our threshold; this returns a matrix of booleans 
+genes_over_cpm_threshold.iGlut.mtx <- gene_cpm.mtx.iGlut > 0.5 
+genes_over_cpm_threshold.iAstro.mtx <- gene_cpm.mtx.iAstro > 0.5 
+
+# how many of the samples have cpm >0.5 for each gene?
+samples_over_thresh.iGABA.int <- rowSums(genes_over_cpm_threshold.iGABA.mtx)
+samples_over_thresh.iGlut.int <- rowSums(genes_over_cpm_threshold.iGlut.mtx)
+samples_over_thresh.iAstro.int <- rowSums(genes_over_cpm_threshold.iAstro.mtx)
+
+
+# subset the matrix only for the genes that are >0.5 cpm in more than 2 samples
+keep.iGABA <- samples_over_thresh.iGABA.int > 2
+keep.iGlut <- samples_over_thresh.iGlut.int > 2
+keep.iAstro <- samples_over_thresh.iAstro.int > 2
+
+
+gene_counts_aftercpm.df.iGABA <- gene_counts.df.iGABA[keep.iGABA,]
+gene_counts_aftercpm.df.iGlut <- gene_counts.df.iGlut[keep.iGlut,]
+gene_counts_aftercpm.df.iAstro <- gene_counts.df.iAstro[keep.iAstro,]
+
+## check for validation that the 0.5 cpm corresponds to 20 counts
+#plot1 <- plot(gene_cpm.mtx[,9], gene_counts.df[,9], ylim=c(0,50), xlim=c(0,3))
+#plot1<-abline(v=0.5, h=20)
+
+## write out 
+PATH <- ('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/')
+write.table(gene_counts_aftercpm.df.iGABA, paste0(PATH, "gene_counts_aftercpm.df.iGABA.xls"), sep="\t", quote=F, row.names=T)
+write.table(gene_counts_aftercpm.df.iGlut, paste0(PATH, "gene_counts_aftercpm.df.iGlut.xls"), sep="\t", quote=F, row.names=T)
+write.table(gene_counts_aftercpm.df.iAstro, paste0(PATH, "gene_counts_aftercpm.df.iAstro.xls"), sep="\t", quote=F, row.names=T)
+
+```
+
+```{r}
+# --------------------------------------------------------------------------- DGE OBJECT CREATION
+
+# The DGElist holds all of the data you want to analyze including:
+#    counts, library size to normalize to, normalization factors, experimental
+#    conditions, gene annotations
+
+data.dge.iGABA <-  DGEList(gene_counts_aftercpm.df.iGABA) 
+data.dge.iGlut <-  DGEList(gene_counts_aftercpm.df.iGlut) 
+data.dge.iAstro <-  DGEList(gene_counts_aftercpm.df.iAstro) 
+
+
+# add experimental condition metadata to the object
+data.dge.iGABA$samples$group <- metadata.df.iGABA$Treatment 
+data.dge.iGlut$samples$group <- metadata.df.iGlut$Treatment 
+data.dge.iAstro$samples$group <- metadata.df.iAstro$Treatment 
+
+## add annotation data to the dge object
+# match the annotations to the dge list object rownames
+annotations.df.iGABA <- annotations.df[match(rownames(data.dge.iGABA), annotations.df$ensembl),]
+annotations.df.iGlut <- annotations.df[match(rownames(data.dge.iGlut), annotations.df$ensembl),]
+annotations.df.iAstro <- annotations.df[match(rownames(data.dge.iAstro), annotations.df$ensembl),]
+
+
+data.dge.iGABA$genes <- annotations.df.iGABA
+data.dge.iGlut$genes <- annotations.df.iGlut
+data.dge.iAstro$genes <- annotations.df.iAstro
+
+```
+
+```{r}
+# --------------------------------------------------------------------------- TMM NORMALIZATION
+# TMM normalizes library sizes. If you do RNA seq on 2 samples and happen to get
+# better reads on one, it will have a bigger library size.
+# TMM accounts for this by defining the right library size, and then normalizing
+# all other library sizes to that one. So it may multiply libraries that are
+# too small by, say, 1.3, and those that are too large by, say, 0.8
+
+data.dge.iGABA <- calcNormFactors(data.dge.iGABA) 
+data.dge.iGlut <- calcNormFactors(data.dge.iGlut) 
+data.dge.iAstro <- calcNormFactors(data.dge.iAstro) 
+
+
+# shows how each library size was normalized
+data.dge.iGABA$samples$norm.factors 
+data.dge.iGlut$samples$norm.factors
+data.dge.iAstro$samples$norm.factors
+```
+
+```{r}
+# --------------------------------------------------------------------------- DESIGN MATRIX
+metadata.df.iGABA$Treatment <- factor(metadata.df.iGABA$Treatment)
+metadata.df.iGlut$Treatment <- factor(metadata.df.iGlut$Treatment)
+metadata.df.iAstro$Treatment <- factor(metadata.df.iAstro$Treatment)
+
+# refactor reference level (to compare against veh)
+metadata.df.iGABA$Treatment <- relevel(metadata.df.iGABA$Treatment, ref = 'veh')
+metadata.df.iGlut$Treatment <- relevel(metadata.df.iGlut$Treatment, ref = 'veh')
+metadata.df.iAstro$Treatment <- relevel(metadata.df.iAstro$Treatment, ref = 'veh')
+
+
+# define models (ie what to regress out)
+design_matrix_iGABA <- model.matrix( ~ 0 + Treatment + Donor, data = metadata.df.iGABA) 
+design_matrix_iGlut <- model.matrix(~ 0 + Treatment + Donor, data = metadata.df.iGlut) 
+design_matrix_iAstro <- model.matrix(~ 0 + Treatment, data = metadata.df.iAstro) # only have 1 donor of astros
+```
+
+```{r}
+# --------------------------------------------------------------------------- VOOM TRANSFORM
+# voom is a limma function that transforms the data into log2cpm which is what
+# the limma package uses for RNA seq analysis. This allows your data to be
+# in the right format for limma's math. 
+
+data.iGABA.voom <- voom(counts=data.dge.iGABA, design=design_matrix_iGABA, plot=FALSE) 
+data.iGlut.voom <- voom(counts=data.dge.iGlut, design=design_matrix_iGlut, plot=FALSE) 
+data.iAstro.voom <- voom(counts=data.dge.iAstro, design=design_matrix_iAstro, plot=FALSE) 
+
+# write voom transformed dge objects 
+write.csv(data.iGABA.voom, '/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/data/iGABA_voom_DGE.csv')
+write.csv(data.iGlut.voom, '/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/data/iGlut_voom_DGE.csv')
+write.csv(data.iAstro.voom, '/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/data/iAstro_voom_DGE.csv')
+```
+
+
+
+```{r}
+# --------------------------------------------------------------------------- PREPROCESSING (for SVA)
+
+setwd('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/data/')
+
+# IMPORT METADATA AND DATA
+meta.iGABA <- read.csv('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/SVA/iGABA_meta_for_SVA.csv', header = TRUE)
+meta.iGlut <- read.csv('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/SVA/iGlut_meta_for_SVA.csv', header = TRUE)
+meta.iAstro <- read.csv('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/SVA/iAstro_meta_for_SVA.csv', header = TRUE)
+
+dge.voom.iGABA <- read.csv('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/data/iGABA_voom_DGE.csv')
+dge.voom.iGlut <- read.csv('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/data/iGlut_voom_DGE.csv')
+dge.voom.iAstro <- read.csv('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/data/iAstro_voom_DGE.csv')
+
+## PREPROCESSING
+# check num NA entries
+is.NA.iAstro <- sum(is.na(dge.voom.iAstro))
+print(is.NA.iAstro) # 329/14181
+
+is.NA.iGABA <- sum(is.na(dge.voom.iGABA))
+print(is.NA.iGABA) # 563/16464
+
+is.NA.iGlut <- sum(is.na(dge.voom.iGlut))
+print(is.NA.iGlut) # 506/15629
+
+# remove NA entries
+dge.voom.iAstro.noNA <- na.omit(dge.voom.iAstro)
+dge.voom.iGlut.noNA <- na.omit(dge.voom.iGlut)
+dge.voom.iGABA.noNA <- na.omit(dge.voom.iGABA)
+
+gene_counts.df.iAstro.noNA <- na.omit(gene_counts_aftercpm.df.iAstro )
+gene_counts.df.iGlut.noNA <- na.omit(gene_counts_aftercpm.df.iGlut)
+gene_counts.df.iGABA.noNA <- na.omit(gene_counts_aftercpm.df.iGABA)
+
+# remove NA cols 
+meta.iAstro <- meta.iAstro %>% select(-c(cellType, Plate, RIN.x, Donor, Sex))
+meta.iGABA <- meta.iGABA %>% select(-c(cellType, Plate, RIN.x, Sex))
+meta.iGlut <- meta.iGlut %>% select(-c(cellType, Plate, RIN.x, Sex))
+
+# factor
+meta.iAstro$Treatment <- as.factor(meta.iAstro$Treatment)
+meta.iGABA$Treatment  <- as.factor(meta.iGABA$Treatment)
+meta.iGlut$Treatment  <- as.factor(meta.iGlut$Treatment)
+
+meta.iGABA$Donor  <- as.factor(meta.iGABA$Donor)
+meta.iGlut$Donor  <- as.factor(meta.iGlut$Donor)
+
+meta.iGABA$Well <- as.factor(meta.iGABA$Well)
+meta.iGlut$Well <- as.factor(meta.iGlut$Well)
+
+
+```
+
+```{r}
+# --------------------------------------------------------------------------- DEFINE & RUN SVA FUNCTION
+
+runSVA <- function(data.dge, meta.df, gene_counts.df, output_prefix) {
+  # remove 0 count genes
+  gene_counts.df <- gene_counts.df[rowSums(gene_counts.df > 0) > 0, ]
+  
+  mod <- model.matrix(~ Treatment, data = meta.df)
+  mod0 <- model.matrix(~ 1, data = meta.df)  #  ~ 1 for a basic null model
+  
+  # Run SVA
+  cat('Calculating # SVs & printing\n')
+  n.sv <- num.sv(gene_counts.df, mod, method="be", B = 20)
+  cat(paste("Calculated # number of SVs:", n.sv, "\n"))
+  
+  svobj <- svaseq(as.matrix(gene_counts.df), mod, mod0, n.sv=n.sv)
+  colnames(svobj$sv) <- paste0('SV', 1:n.sv)
+  
+  # Save SVs
+  modSv <- cbind(mod, svobj$sv)
+  modSv_save <- as.data.frame(modSv) %>%
+    tibble::rownames_to_column('sampleID')
+  write.table(modSv_save, file=paste0(output_prefix, '_SVA_preserve.tsv'), quote=FALSE, sep='\t', col.names=TRUE, row.names=FALSE)
+  
+  # Combine metadata with SVs
+  svobj$sv <- as.data.frame(svobj$sv)
+  meta_sv <- cbind(meta.df, svobj$sv)
+  
+  # Prepare for correlation tests
+  correlation_results <- data.frame(
+    Meta_Var = character(),
+    SV_Var = character(),
+    Estimate = numeric(),
+    P_Value = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  # Test correlations between each metadata variable and each SV
+  for (sv_var in names(svobj$sv)) {
+    for (meta_var in names(meta.df)[-1]) {  # Assuming first column is not a variable of interest (e.g., ID)
+      if(is.numeric(meta_sv[[meta_var]])) {  
+        test_result <- cor.test(meta_sv[[meta_var]], meta_sv[[sv_var]], method = "pearson")
+        correlation_results <- rbind(correlation_results, data.frame(
+          Meta_Var = meta_var,
+          SV_Var = sv_var,
+          Estimate = test_result$estimate,
+          P_Value = test_result$p.value
+        ))
+      }
+    }
+  }
+  
+  # save meta w/ SVs to csv
+  write.csv(meta_sv, file = paste0(output_prefix, "_meta_w_sv.csv"), row.names = FALSE)
+  
+  # Save correlation results to a CSV file
+  write.csv(correlation_results, file = paste0(output_prefix, "_correlation_results.csv"), row.names = FALSE)
+  
+  
+}
+
+# RUN SVA FOR EACH DATASET
+
+runSVA(dge.voom.iAstro.noNA, meta.iAstro, gene_counts.df.iAstro.noNA, 'iAstro_SVA')
+runSVA(dge.voom.iGlut.noNA, meta.iGlut, gene_counts.df.iGlut.noNA, 'iGlut_SVA')
+runSVA(dge.voom.iGABA.noNA, meta.iGABA, gene_counts.df.iGABA.noNA, 'iGABA_SVA')
+```
+
+
+
+```{r}
+# --------------------------------------------------------------------------- DESIGN MATRIX w/ SVs
+# load metas 
+dir_path <- sprintf('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG') 
+meta.iGABA <- read.delim(paste0(dir_path, '/iGABA_SVA_meta_w_sv.csv'), sep = ',')
+meta.iAstro <- read.delim(paste0(dir_path, '/iAstro_SVA_meta_w_sv.csv'), sep = ',')
+meta.iGlut <- read.delim(paste0(dir_path, '/iGlut_SVA_meta_w_sv.csv'), sep = ',')
+
+meta.iGABA <- meta.iGABA %>%
+  mutate(Treatment = case_when(
+             Treatment == 0      ~ 'veh',
+           Treatment == 1     ~ 'ghre',
+           Treatment == 2      ~ 'lep',
+           Treatment == 3     ~ 'sema',
+           Treatment == 4 ~ 'ghreSema',
+           Treatment == 5  ~ 'lepSema'
+         )) 
+
+# factor
+meta.iGABA$Treatment <- as.factor(meta.iGABA$Treatment)
+meta.iGlut$Treatment <- as.factor(meta.iGlut$Treatment)
+meta.iAstro$Treatment <- as.factor(meta.iAstro$Treatment)
+
+# refactor reference level (to compare against veh)
+meta.iGABA$Treatment <- relevel(meta.iGABA$Treatment, ref = 'veh')
+meta.iGlut$Treatment <- relevel(meta.iGlut$Treatment, ref = 'veh')
+meta.iAstro$Treatment <- relevel(meta.iAstro$Treatment, ref = 'veh')
+
+
+# define what to regress out for
+# ADD SVs HERE FOR SVs NOT EXPLAINED BY 
+# remove donor from design matrix
+  # use dup.cor() from limma to account for repeated measure donor effects
+design_matrix_iGABA_sv <- model.matrix( ~ 0 + Treatment + SV1 + SV2 + SV3 + Well, data = meta.iGABA) 
+design_matrix_iGlut_sv <- model.matrix(~ 0 + Treatment  + SV1 + Well , data = meta.iGlut) 
+design_matrix_iAstro_sv <- model.matrix(~ 0 + Treatment, data = meta.iAstro) 
+```
+
+# redo voom ??????? 
+  just used my previously voomed data (eg data.iAstro.voom from previous code ^)
+  BUT looks like dim aren't the same 
+```{r}
+# voom is a limma function that transforms the data into log2cpm which is what
+# the limma package uses for RNA seq analysis. This allows your data to be
+# in the right format for limma's math. 
+
+# data.iGABA.voom <- voom(counts=data.dge.iGABA, design=design_matrix_iGABA_sv, plot=TRUE)
+# data.iGlut.voom <- voom(counts=data.dge.iGlut, design=design_matrix_iGlut_sv, plot=TRUE)
+# data.iAstro.voom <- voom(counts=data.dge.iAstro, design=design_matrix_iAstro_sv, plot=TRUE) 
+# 
+# # write voom transformed dge objects 
+# write.csv(data.iGABA.voom, '/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/data/iGABA_voom_DGE_2.csv')
+# write.csv(data.iGlut.voom, '/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/data/iGlut_voom_DGE_2.csv')
+# write.csv(data.iAstro.voom, '/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/data/iAstro_voom_DGE_2.csv')
+```
+
+
+```{r}
+# --------------------------------------------------------------------------- VARIANCE PARTITION
+
+# load voom transformed dge objects
+setwd('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/data/')
+data.iGABA.voom <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/data/iGABA_voom_DGE.csv', header=TRUE,sep=",")
+data.iGlut.voom <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/data/iGlut_voom_DGE.csv', header=TRUE,sep=",")
+data.iAstro.voom <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/data/iAstro_voom_DGE.csv', header=TRUE,sep=",")
+
+# load metas 
+dir_path <- sprintf('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG') 
+metadata.df.iGABA <- read.delim(paste0(dir_path, '/iGABA_SVA_meta_w_sv.csv'), sep = ',')
+metadata.df.iAstro <- read.delim(paste0(dir_path, '/iAstro_SVA_meta_w_sv.csv'), sep = ',')
+metadata.df.iGlut <- read.delim(paste0(dir_path, '/iGlut_SVA_meta_w_sv.csv'), sep = ',')
+
+# select only cols of interest from meta w SVs; exclude donor (will account for donor effects w/ dupcor() ) 
+meta.iGABA <- subset(metadata.df.iGABA, select=c('sampleName', 'Treatment', 'Well', 'SV1','SV2', 'SV3'))
+meta.iGlut <- subset(metadata.df.iGlut, select=c('sampleName', 'Treatment', 'Well','SV1'))
+meta.iAstro <- subset(metadata.df.iAstro, select=c('sampleName', 'Treatment')) # 
+
+as.factor(meta.iGABA$Treatment)
+as.factor(meta.iGlut$Treatment)
+as.factor(meta.iAstro$Treatment)
+
+
+# change voom mat sample names to match meta sample names
+colnames(data.iGABA.voom) <- gsub("^X", "", sub("_.*", "", colnames(data.iGABA.voom)))
+colnames(data.iGlut.voom) <- gsub("^X", "", sub("_.*", "", colnames(data.iGlut.voom)))
+colnames(data.iAstro.voom) <- gsub("^X", "", sub("_.*", "", colnames(data.iAstro.voom)))
+
+# drop unnecessary columns from expression matrix
+data.iGABA.voom <- data.iGABA.voom[, !(colnames(data.iGABA.voom) %in% c("Chromosome", 'Gene', 'description'))]#c("ensembl", "Chromosome", 'Gene', 'description'))]
+data.iGlut.voom <- data.iGlut.voom[, !(colnames(data.iGlut.voom) %in% c("Chromosome", 'Gene', 'description'))]#c("ensembl", "Chromosome", 'Gene', 'description'))]
+data.iAstro.voom <- data.iAstro.voom[, !(colnames(data.iAstro.voom) %in% c("Chromosome", 'Gene', 'description'))]#c("ensembl", "Chromosome", 'Gene', 'description'))]
+
+
+# model (all vars are categorical --> modeled as random effects), hardcode in SVs 
+form.iAstro <- ~ Treatment 
+form.iGlut <- ~ Treatment + Well + SV1 
+form.iGABA <- ~ Treatment + Well + SV1 + SV2 + SV3
+
+
+## fit model and extract results
+  ## since all vars are categorical, linear model is used 
+  ## e/ entry  in results is a regression model fit on single gene
+# varPart.iGABA <- fitExtractVarPartModel(data.iGABA.voom, form.iGABA, meta.iGABA)
+# varPart.iGlut <- fitExtractVarPartModel(data.iGlut.voom, form.iGlut, meta.iGlut)
+# varPart.iAstro <- fitExtractVarPartModel(data.iAstro.voom, form.iAstro, meta.iAstro)
+# 
+# 
+# # sort vars by median fraction of variance explained
+# vp.iGABA <- sortCols(varPart.iGABA)
+# vp.iGlut <- sortCols(varPart.iGlut)
+# vp.iAstro <- sortCols(varPart.iAstro)
+# 
+# # write file
+# setwd('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/')
+# write.table(vp.iGABA, sprintf("variancePartition.iGABA_output_sv.txt"), sep="\t", quote=F, row.names=F)
+# write.table(vp.iGlut, sprintf("variancePartition.iGlut_output_sv.txt"), sep="\t", quote=F, row.names=F)
+# write.table(vp.iAstro, sprintf("variancePartition.iAstro_output_sv.txt"), sep="\t", quote=F, row.names=F)
+
+
+################# visualize variance partition ################
+# library(ggplot2)
+# library(reshape2)
+# 
+# library(ggplot2)
+# library(reshape2)
+# 
+# # Function to plot variance partition for multiple sample types
+# plotVariancePartition <- function(vp, outputFilename = "variancePartition.png") {
+#   col <- c(ggColorHue(ncol(vp) - 1), "grey85")
+#   vp2 <- (vp * 100) # Convert to percentage
+#   names <- colnames(vp2)
+#   t <- apply(vp2, 2, FUN=median)
+#   t <- round(t, 2)
+#   t[t == 0.00] <- "<0.1"
+#   textMatrix <- paste(names, "\n(", t, "%)\n", sep = "")
+#   melted <- melt(vp2)
+#   
+#   p <- ggplot(melted, aes(x=variable, y=value, color=variable)) +
+#     geom_violin(aes(x = variable, y = value), scale = "width") +
+#     geom_boxplot(aes(x = variable, y = value), width = .1, outlier.size = 0.4) +
+#     theme_bw() + ylim(0, 100) +
+#     theme(axis.line.x = element_line(linewidth = 0.3, linetype = "solid", colour = "black"),
+#           axis.line.y = element_line(linewidth = 0.3, linetype = "solid", colour = "black"),
+#           axis.text.x = element_text(size=8, angle=45, colour="black", hjust=1),
+#           axis.text.y = element_text(size=7, colour="black")) +
+#     scale_x_discrete(labels=textMatrix) + 
+#     ylab("Variance Explained (%)")
+#   
+#   # Save the plot to file
+#   setwd("/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/figures")
+#   ggsave(filename = outputFilename, plot = p, device = "png", width = 10, height = 7, units = "in", dpi = 300)
+#   
+# }
+# 
+# plotVariancePartition(vp.iGABA, "variancePartition_iGABA_sv.png")
+# plotVariancePartition(vp.iGlut, "variancePartition_iGlut_sv.png")
+# plotVariancePartition(vp.iAstro, "variancePartition_iAstro_sv.png")
+# 
+# ################# choose covariates ################
+# #alanna's criteria: continuous technical factors that explained ≥ 1% variation in ≥ 10% of genes
+# chooseCovariates <- function(cellType, vp, outputFilename) {
+#   
+#   cat("Choosing Covariates\n")
+#   test=colnames(vp)[1:length(colnames(vp))-1]
+#   covs_to_adjust=c()
+#   for(col_i in test) {
+#     print(col_i)
+#     if(length(which(vp[,col_i] >= 0.01))/(nrow(vp)) > 0.1) covs_to_adjust=c(covs_to_adjust,col_i)
+#   }
+#   
+#   setwd("/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/variancePartition/")
+#   write.table(covs_to_adjust, file=paste0(cellType, "_covs_sv.txt"), quote=F, sep="\n", col.names=T, row.names=F)
+#   
+# }
+# chooseCovariates('iGABA', vp.iGABA)
+# chooseCovariates('iGlut', vp.iGlut)
+# chooseCovariates('iAstro', vp.iAstro)
+
+```
+
+# duplicate corr 
+```{r}
+# add donor into meta.iGlut and meta.iGABA
+meta.iGlut.sv <- merge(meta.iGlut, metadata.df.iGlut[, c("sampleName", "Donor")], by = "sampleName")
+meta.iGABA.sv <- merge(meta.iGABA, metadata.df.iGABA[, c("sampleName", "Donor")], by = "sampleName")
+
+# dupCorr_iGlut <- duplicateCorrelation(data.iGlut.voom, design_matrix_iGlut_sv, block=meta.iGlut$Donor)
+# 
+# dupCorr_iGABA <- duplicateCorrelation(data.iGABA.voom, design_matrix_iGABA_sv, block=meta.iGABA$Donor)
+# 
+# cor_consensus_iGABA <- dupCorr_iGABA$consensus.correlation # 0.9715695
+# cor_consensus_iGlut <- dupCorr_iGlut$consensus.correlation # 0.9894554
+# 
+# as.data.frame(dupCorr_iGABA)
+# as.data.frame(dupCorr_iGlut)
+
+```
+
+
+
+# then lm fit 
+```{r}
+# --------------------------------------------------------------------------- LM FIT
+# We have a general model that explains RNA expression and we want to fit our
+# data to that model. This allows us to use limma to make contrasts
+
+# id and remove duplicate ensembls 
+data.iAstro.voom <- data.iAstro.voom[!duplicated(data.iAstro.voom$ensembl), ]
+
+
+# id rows w/ missing ensembl
+missing_ensembl.iGABA <- is.na(data.iGABA.voom$ensembl)
+View(data.iGABA.voom[missing_ensembl.iGABA, ])
+
+missing_ensembl.iGlut <- is.na(data.iGlut.voom$ensembl)
+View(data.iGlut.voom[missing_ensembl.iGlut, ])
+
+missing_ensembl.iAstro <- is.na(data.iAstro.voom$ensembl)
+View(missing_ensembl.iAstro)
+
+# filter by NA in ensemble col 
+data.iAstro.voom <- data.iAstro.voom[!is.na(data.iAstro.voom$ensembl), ]
+
+
+# remove rows w/ missing ensembl
+data.iGABA.voom <- data.iGABA.voom[!missing_ensembl.iGABA, ]
+data.iAstro.voom <- data.iAstro.voom[!missing_ensembl.iAstro, ]
+data.iGlut.voom <- data.iGlut.voom[!missing_ensembl.iGlut, ]
+
+# set rownames as ensembl
+rownames(data.iGABA.voom) <- data.iGABA.voom$ensembl
+data.iGABA.voom <- data.iGABA.voom[ , !(names(data.iGABA.voom) %in% c("ensembl"))]
+
+rownames(data.iGlut.voom) <- data.iGlut.voom$ensembl
+data.iGlut.voom <- data.iGlut.voom[ , !(names(data.iGlut.voom) %in% c("ensembl"))]
+
+rownames(data.iAstro.voom) <- data.iAstro.voom$ensembl
+
+
+data.iAstro.voom <- data.iAstro.voom[ , !(names(data.iAstro.voom) %in% c("ensembl"))]
+data.iAstro.voom <- data.iAstro.voom[ , !(names(data.iAstro.voom) %in% c(""))]
+data.iAstro.voom <- data.iAstro.voom[ , !(names(data.iAstro.voom) %in% c("X"))]
+
+# remove repetitive "" ensembl col
+data.iGABA.voom <- data.iGABA.voom[ , !(names(data.iGABA.voom) %in% c(""))]
+data.iGlut.voom <- data.iGlut.voom[ , !(names(data.iGlut.voom) %in% c(""))]
+
+# remove char cols 
+ data.iAstro.voom <-subset(data.iAstro.voom, select = c(-Gene_name, -description, -Chromosome))
+
+
+# lmfit
+data.fit.iGABA <- lmFit(object=data.iGABA.voom, design=design_matrix_iGABA_sv, correlation = cor_consensus_iGABA) 
+data.fit.iGlut <- lmFit(object=data.iGlut.voom, design=design_matrix_iGlut_sv, correlation = cor_consensus_iGlut) 
+data.fit.iAstro <- lmFit(object=data.iAstro.voom, design=design_matrix_iAstro_sv)
+```
+
+
+```{r}
+# --------------------------------------------------------------------------- CONTRAST MATRIX
+## make contrast to assess effects of different treatments (just start w/ lep, ghre, sema each v. veh, then do combinatorial/synergy)
+
+cm_iGABA <-makeContrasts( 
+   lep_v_veh = Treatmentlep - Treatmentveh,
+  ghre_v_veh = Treatmentghre - Treatmentveh,
+  sema_v_veh = Treatmentsema - Treatmentveh,
+  levels=design_matrix_iGABA_sv)
+
+cm_iGlut <-makeContrasts( 
+   lep_v_veh = Treatmentlep - Treatmentveh,
+  ghre_v_veh = Treatmentghre - Treatmentveh,
+  sema_v_veh = Treatmentsema - Treatmentveh,
+  levels=design_matrix_iGlut_sv)
+
+cm_iAstro <-makeContrasts( 
+   lep_v_veh = Treatmentlep - Treatmentveh,
+  ghre_v_veh = Treatmentghre - Treatmentveh,
+  sema_v_veh = Treatmentsema - Treatmentveh,
+  levels=design_matrix_iAstro_sv)
+
+# add contrasts to the Lmfit object. 
+fit.iGABA <- contrasts.fit(data.fit.iGABA, cm_iGABA)
+fit.iGlut <- contrasts.fit(data.fit.iGlut, cm_iGlut)
+fit.iAstro <- contrasts.fit(data.fit.iAstro, cm_iAstro)
+
+# perform bayes shrinkage to the analysis and estimate modified t and p values
+fit.eBayes.iGABA <- eBayes(fit.iGABA)
+fit.eBayes.iGlut <- eBayes(fit.iGlut)
+fit.eBayes.iAstro <- eBayes(fit.iAstro)
+
+```
+
+```{r}
+# --------------------------------------------------------------------------  FIND DEGs
+# find most differentially expressed genes
+DGE_lep_v_veh.iGABA <- topTable(fit.eBayes.iGABA, coef="lep_v_veh", n=80000)
+DGE_sema_v_veh.iGABA <- topTable(fit.eBayes.iGABA, coef="sema_v_veh", n=80000) 
+DGE_ghre_v_veh.iGABA <- topTable(fit.eBayes.iGABA, coef="ghre_v_veh", n=80000) 
+
+DGE_lep_v_veh.iGlut <- topTable(fit.eBayes.iGlut, coef="lep_v_veh", n=80000)
+DGE_sema_v_veh.iGlut <- topTable(fit.eBayes.iGlut, coef="sema_v_veh", n=80000) 
+DGE_ghre_v_veh.iGlut <- topTable(fit.eBayes.iGlut, coef="ghre_v_veh", n=80000)
+
+DGE_lep_v_veh.iAstro <- topTable(fit.eBayes.iAstro, coef="lep_v_veh", n=80000)
+DGE_sema_v_veh.iAstro <- topTable(fit.eBayes.iAstro, coef="sema_v_veh", n=80000)
+DGE_ghre_v_veh.iAstro <- topTable(fit.eBayes.iAstro, coef="ghre_v_veh", n=80000)
+
+# make DGE object col for ensembl (currently ensembl is rownames) 
+DGE_lep_v_veh.iGABA <- rownames_to_column(DGE_lep_v_veh.iGABA, var = "ensembl")
+DGE_sema_v_veh.iGABA <- rownames_to_column(DGE_sema_v_veh.iGABA, var = "ensembl")
+DGE_ghre_v_veh.iGABA <- rownames_to_column(DGE_ghre_v_veh.iGABA, var = "ensembl")
+
+DGE_lep_v_veh.iGlut <- rownames_to_column(DGE_lep_v_veh.iGlut, var = "ensembl")
+DGE_sema_v_veh.iGlut <- rownames_to_column(DGE_sema_v_veh.iGlut, var = "ensembl")
+DGE_ghre_v_veh.iGlut <- rownames_to_column(DGE_ghre_v_veh.iGlut, var = "ensembl")
+
+DGE_lep_v_veh.iAstro <- rownames_to_column(DGE_lep_v_veh.iAstro, var = "ensembl")
+DGE_sema_v_veh.iAstro <- rownames_to_column(DGE_sema_v_veh.iAstro, var = "ensembl")
+DGE_ghre_v_veh.iAstro <- rownames_to_column(DGE_ghre_v_veh.iAstro, var = "ensembl")
+
+# add annotations to the table
+DGE_lep_v_veh.iGABA <- merge(DGE_lep_v_veh.iGABA, annotations.df.iGABA, 
+                             by.x="ensembl", by.y="ensembl")
+DGE_sema_v_veh.iGABA <- merge(DGE_sema_v_veh.iGABA, annotations.df.iGABA, by.x="ensembl",
+                              by.y="ensembl")
+DGE_ghre_v_veh.iGABA <- merge(DGE_ghre_v_veh.iGABA, annotations.df.iGABA, by.x="ensembl",
+                              by.y="ensembl")
+
+DGE_lep_v_veh.iGlut <- merge(DGE_lep_v_veh.iGlut, annotations.df.iGlut, by.x="ensembl",
+                             by.y="ensembl")
+DGE_sema_v_veh.iGlut <- merge(DGE_sema_v_veh.iGlut, annotations.df.iGlut, by.x="ensembl",
+                              by.y="ensembl")
+DGE_ghre_v_veh.iGlut <- merge(DGE_ghre_v_veh.iGlut, annotations.df.iGlut, by.x="ensembl",
+                              by.y="ensembl")
+
+DGE_lep_v_veh.iAstro <- merge(DGE_lep_v_veh.iAstro, annotations.df.iAstro, by.x="ensembl",
+                             by.y="ensembl")
+DGE_sema_v_veh.iAstro <- merge(DGE_sema_v_veh.iAstro, annotations.df.iAstro, by.x="ensembl",
+                              by.y="ensembl")
+DGE_ghre_v_veh.iAstro <- merge(DGE_ghre_v_veh.iAstro, annotations.df.iAstro, by.x="ensembl",
+                              by.y="ensembl")
+
+# save DEGs
+setwd('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/')
+write.table(DGE_lep_v_veh.iGABA, "DEG_response_iGABA_lep_v_veh_SV.txt", sep="\t")
+write.table(DGE_sema_v_veh.iGABA, "DEG_response_iGABA_sema_v_veh_SV.txt", sep="\t")
+write.table(DGE_ghre_v_veh.iGABA, "DEG_response_iGABA_ghre_v_veh_SV.txt", sep="\t")
+
+write.table(DGE_lep_v_veh.iGlut, "DEG_response_iGlut_lep_v_veh_SV.txt", sep="\t")
+write.table(DGE_sema_v_veh.iGlut, "DEG_response_iGlut_sema_v_veh_SV.txt", sep="\t")
+write.table(DGE_ghre_v_veh.iGlut, "DEG_response_iGlut_ghre_v_veh_SV.txt", sep="\t")
+
+setwd('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/')
+
+write.table(DGE_lep_v_veh.iAstro, "DEG_response_iAstro_lep_v_veh_SV.txt", sep="\t")
+write.table(DGE_sema_v_veh.iAstro, "DEG_response_iAstro_sema_v_veh_SV.txt", sep="\t")
+write.table(DGE_ghre_v_veh.iAstro, "DEG_response_iAstro_ghre_v_veh_SV.txt", sep="\t")   
+
+```
+
+```{r}
+# --------------------------------------------------------------------------- EXTRACT SIG DEGS
+results.iAstro.ghre <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iAstro_ghre_v_veh_SV.txt')
+results.iAstro.lep <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iAstro_lep_v_veh_SV.txt')
+results.iAstro.sema <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iAstro_sema_v_veh_SV.txt')
+
+results.iGlut.ghre <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iGlut_ghre_v_veh.txt')
+results.iGlut.lep <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iGlut_lep_v_veh.txt')
+results.iGlut.sema <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iGlut_sema_v_veh.txt')
+
+results.iGABA.ghre <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iGABA_ghre_v_veh.txt')
+results.iGABA.lep <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iGABA_lep_v_veh.txt')
+results.iGABA.sema <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iGABA_sema_v_veh.txt')
+
+sigDEG_lep_v_veh.iGABA <- DGE_lep_v_veh.iGABA[DGE_lep_v_veh.iGABA$adj.P.Val <= 0.05, ]
+sigDEG_sema_v_veh.iGABA <- DGE_sema_v_veh.iGABA[DGE_sema_v_veh.iGABA$adj.P.Val <= 0.05, ]
+sigDEG_ghre_v_veh.iGABA <- DGE_ghre_v_veh.iGABA[DGE_ghre_v_veh.iGABA$adj.P.Val <= 0.05, ] 
+
+sigDEG_lep_v_veh.iGlut <- DGE_lep_v_veh.iGlut[DGE_lep_v_veh.iGlut$adj.P.Val <= 0.05, ]
+sigDEG_sema_v_veh.iGlut <- DGE_sema_v_veh.iGlut[DGE_sema_v_veh.iGlut$adj.P.Val <= 0.05, ]
+sigDEG_ghre_v_veh.iGlut <- DGE_ghre_v_veh.iGlut[DGE_ghre_v_veh.iGlut$adj.P.Val <= 0.05, ] 
+
+sigDEG_lep_v_veh.iAstro <- DGE_lep_v_veh.iAstro[DGE_lep_v_veh.iAstro$adj.P.Val <= 0.05, ]
+sigDEG_sema_v_veh.iAstro <- DGE_sema_v_veh.iAstro[DGE_sema_v_veh.iAstro$adj.P.Val <= 0.05, ]
+sigDEG_ghre_v_veh.iAstro <- DGE_ghre_v_veh.iAstro[DGE_ghre_v_veh.iAstro$adj.P.Val <= 0.05, ] 
+
+setwd('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG')
+write.table(sigDEG_ghre_v_veh.iAstro, 'sigDEG_ghre_v_veh.iAstro.txt')
+
+```
+
+```{r}
+# --------------------------------------------------------------------------- PLOT F(X)
+# load DEG data
+
+iAstro_ghre_v_veh <- read.delim("/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iAstro_ghre_v_veh_SV.txt")
+iAstro_lep_v_veh <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iAstro_lep_v_veh_SV.txt')
+iAstro_sema_v_veh <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iAstro_sema_v_veh_SV.txt')
+
+iGlut_ghre_v_veh <- read.delim("/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iGlut_ghre_v_veh_SV.txt")
+iGlut_lep_v_veh <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iGlut_lep_v_veh_SV.txt')
+iGlut_sema_v_veh <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iGlut_sema_v_veh_SV.txt')
+
+iGABA_ghre_v_veh <- read.delim("/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iGABA_ghre_v_veh_SV.txt")
+iGABA_lep_v_veh <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iGABA_lep_v_veh_SV.txt')
+iGABA_sema_v_veh <- read.delim('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_response_iGABA_sema_v_veh_SV.txt')
+
+makeVolcanoPlotAndSave <- function(df, title = "Volcano Plot", filename = "volcano_plot.png") {
+  # Ensure -log10 transformation of p-value is correct
+  df$negLogPval <- -log10(df$P.Value)
+  
+  # Create a new column for color categorization
+  df$colorCategory <- ifelse(df$adj.P.Val < 0.05 & abs(df$logFC) > 1, "Significant FC and Bonf P-Value",
+    ifelse(df$adj.P.Val < 0.05, "Bonf Significant P-Value Only",
+    ifelse(abs(df$logFC) > 2, "Significant FC Only", 
+    ifelse(df$P.Value < 0.05, 'Non Bonf Sig P-Value Only',
+           "Not Significant"))))
+
+  p <- ggplot(df, aes(x = logFC, y = negLogPval)) +
+    geom_point(aes(color = colorCategory), alpha = 0.5) +
+    scale_color_manual(values = c("Significant FC and Bonf P-Value" = "red",
+                                  "Bonf Significant P-Value Only" = "blue",
+                                  "Significant FC Only" = "green",
+                                  "Non Bonf Sig P-Value Only" = "orange",
+                                  "Not Significant" = "grey50")) +
+    geom_text_repel(data = subset(df, colorCategory %in% c("Bonf Significant P-Value Only", "Significant FC Only", 'Significant FC and Bonf P-Value')),
+                    aes(label = Gene_name), 
+                    box.padding = 0.35, 
+                    point.padding = 0.5,
+                    segment.color = 'grey50') +
+    labs(title = title, x = "Log2 Fold Change", y = "-Log10 P-Value") +
+    theme_minimal() +
+    theme(legend.position = 'top',
+          panel.background = element_rect(fill = "white")) # Set the panel background to white
+  
+  # Display the plot
+  print(p)
+  
+  # Save the plot
+  ggsave(filename, plot = p, width = 10, height = 8, dpi = 300, path = '/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/figures/')
+
+}
+
+# write out
+makeVolcanoPlotAndSave(iAstro_ghre_v_veh, "iAstro: Ghrelin (100nm) v. Vehicle", "iAstro_ghre_v_veh_SVA.png")
+makeVolcanoPlotAndSave(iAstro_lep_v_veh, "iAstro: Leptin (100nm) v. Vehicle", "iAstro_lep_v_veh_SVA.png")
+makeVolcanoPlotAndSave(iAstro_sema_v_veh, "iAstro: Sema (100nm) v. Vehicle", "iAstro_sema_v_veh_SVA.png.png")
+
+makeVolcanoPlotAndSave(iGlut_ghre_v_veh, "iGlut: Ghrelin (100nm) v. Vehicle", "iGlut_ghre_v_veh_SVA.png")
+makeVolcanoPlotAndSave(iGlut_lep_v_veh, "iGlut: Leptin (100nm) v. Vehicle", "iGlut_lep_v_veh_SVA.png")
+makeVolcanoPlotAndSave(iGlut_sema_v_veh, "iGlut: Sema (100nm) v. Vehicle", "iGlut_sema_v_veh_SVA.png")
+
+makeVolcanoPlotAndSave(iGABA_ghre_v_veh, "iGABA: Ghrelin (100nm) v. Vehicle", "iGABA_ghre_v_veh_SVA.png")
+makeVolcanoPlotAndSave(iGABA_lep_v_veh, "iGABA: Leptin (100nm) v. Vehicle", "iGABA_lep_v_veh_SVA.png")
+makeVolcanoPlotAndSave(iGABA_sema_v_veh, "iGABA: Sema (100nm) v. Vehicle", "iGABA_sema_v_veh_SVA.png")
+
+```
+
