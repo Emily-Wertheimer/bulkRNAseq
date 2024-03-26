@@ -1,0 +1,117 @@
+---
+title: "GSEA"
+output: html_notebook
+---
+# load 
+```{r}
+# install
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("fgsea")
+BiocManager::install('DOSE')
+BiocManager::install("clusterProfiler")
+
+# libraries
+library(fgsea)
+library(ggplot2)
+library(clusterProfiler)
+library(DOSE)
+library(dplyr)
+library('biomaRt')
+
+# expression objects
+EXP_PATH <- ('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/3_DEG/results/DEG/DEG_postSVA')
+expression_objects <- list.files(path=EXP_PATH, pattern='.txt')
+
+# gene sets
+GENE_SET_PATH <- ('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/4_GSEA/data/geneSets')
+geneset_files <- list.files(path = GENE_SET_PATH, pattern = '.gmt')
+
+```
+
+# run analysis, save dfs to text, save significant pathways fig
+```{r}
+setwd('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/4_GSEA/data/geneSets/')
+
+# for each geneset:
+for (i in 1:length(geneset_files)) {
+  fgsea.res.list <- list()
+  gmt <- read.gmt(file.path(getwd(), geneset_files[i]))
+  gmt.set <- geneset_files[i]
+  
+  # for each expression object:
+  for (j in 1:length(expression_objects)) {
+    pathways <- gmtPathways(file.path(GENE_SET_PATH, gmt.set))
+
+    # Read the expression data from the file
+    expression_data <- read.delim(file.path(EXP_PATH, expression_objects[j]), stringsAsFactors = FALSE)
+    
+    # ensembl --> hgnc
+    mart <- useDataset('hsapiens_gene_ensembl', useMart('ensembl'))
+    genes <- expression_data$ensembl
+    gene_list <- getBM(attributes=c('hgnc_symbol', 'chromosome_name', 'ensembl_gene_id'), 
+                       filters = 'ensembl_gene_id', 
+                       values = genes, 
+                       mart = mart)
+    expression_data_merged <- as.data.frame(merge(expression_data, gene_list, by.x = 'ensembl', by.y = 'ensembl_gene_id'))
+    
+    # ranks
+    ranks <- expression_data_merged[,c('hgnc_symbol', 'logFC')]
+    ranks <- setNames(ranks$logFC, ranks$hgnc_symbol)
+
+    fgseaResult <- fgsea(pathways = pathways, stats = ranks)
+    fgsea.res.list[[i]] <- fgseaResult
+    fgsea.res.list[[i]] <- fgsea.res.list[[i]][order(fgsea.res.list[[i]]$pval), ]
+
+  }
+
+  names(fgsea.res.list) <- names(expression_objects[j])
+  
+  
+  p <- list()
+  
+  for (k in 1:length(fgsea.res.list)){
+    fgseaRes <- fgsea.res.list[[k]]
+
+    # Convert all columns to character type
+    if(is.data.frame(fgseaRes)) {
+      fgseaRes[] <- lapply(fgseaRes, as.character)
+    
+      
+    # find top pathways 
+    topPathwaysUp <- fgseaRes[fgseaRes$ES > 0 & fgseaRes$padj <= 0.05, "pathway"]
+    topPathwaysDown <- fgseaRes[fgseaRes$ES < 0 & fgseaRes$padj <= 0.05, "pathway"]
+    #topPathways <- c(topPathwaysUp, rev(topPathwaysDown))
+    # Ensure both are character vectors before concatenation
+    topPathways <- c(as.character(topPathwaysUp), as.character(rev(topPathwaysDown)))
+
+    # writing
+    name <- expression_objects[k]
+    filepath <- file.path(GENE_SET_PATH, paste(gmt.set, name, 'fgsea.txt'))
+
+
+   write.table(fgseaRes, file = filepath, sep = "\t", row.names = FALSE, col.names = TRUE)
+   } 
+    
+    else {
+    message("fgseaRes is not a data frame. Skipping write operation for iteration ", k)
+  }
+    
+    
+    # plot
+    p[i] <- plotGseaTable(pathways[topPathways], ranks, fgseaR, gseaParam = 0.05)
+  }
+  
+ pdf(paste0('/gpfs/gibbs/pi/huckins/ekw28/bulkRNAseq/ghre_lep_sema_RNAseq/4_GSEA/figures', '/', gmt.set, '_', name, '_','fgsea.pdf'))
+  for (i in 1:length(p)) {
+    print(p[i])
+  }
+  dev.off()
+}
+
+
+  
+  
+
+```
+
